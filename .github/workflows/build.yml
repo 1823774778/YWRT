@@ -101,6 +101,7 @@ jobs:
       - name: Generate .config for ${{ matrix.device.display }}
         if: steps.setdevice.outputs.build == 'true'
         run: |
+          set -o pipefail
           echo "=== Copying seed config: ${{ matrix.device.seed }} ==="
           cp ${{ matrix.device.seed }} .config
           echo "=== Running defconfig to expand ==="
@@ -113,7 +114,8 @@ jobs:
       - name: Download sources
         if: steps.setdevice.outputs.build == 'true'
         run: |
-          make download -j$(nproc) 2>&1 | tail -30
+          set -o pipefail
+          make download -j$(nproc) 2>&1 | tail -50
           echo "=== Download complete ==="
           ls dl/ | wc -l
           du -sh dl/
@@ -121,31 +123,49 @@ jobs:
       - name: Build tools
         if: steps.setdevice.outputs.build == 'true'
         run: |
-          make tools/compile -j$(nproc) 2>&1 | tail -30
+          set -o pipefail
+          make tools/compile -j$(nproc) 2>&1 | tail -50
 
       - name: Build toolchain
         if: steps.setdevice.outputs.build == 'true'
         run: |
-          make toolchain/compile -j$(nproc) 2>&1 | tail -30
+          set -o pipefail
+          make toolchain/compile -j$(nproc) 2>&1 | tail -50
 
       - name: Build target (kernel)
         if: steps.setdevice.outputs.build == 'true'
         run: |
-          make target/linux/compile -j$(nproc) 2>&1 | tail -30
+          set -o pipefail
+          make target/linux/compile -j$(nproc) 2>&1 | tail -50
 
       - name: Build packages
         if: steps.setdevice.outputs.build == 'true'
         run: |
-          make package/compile -j$(nproc) 2>&1 | tail -30
-          make package/install -j$(nproc) 2>&1 | tail -30
-          make package/index -j$(nproc) 2>&1 | tail -30
+          set -o pipefail
+          make package/compile -j$(nproc) 2>&1 | tail -50
+          make package/install -j$(nproc) 2>&1 | tail -50
+          make package/index -j$(nproc) 2>&1 | tail -50
 
       - name: Build firmware images
         if: steps.setdevice.outputs.build == 'true'
         run: |
-          make target/linux/install -j$(nproc) 2>&1 | tail -30
+          set -o pipefail
+          make target/linux/install -j$(nproc) 2>&1 | tail -50
           echo "=== Build complete ==="
           find bin/targets/ -type f | head -30
+
+      - name: Verify firmware built
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          echo "=== Checking for firmware files ==="
+          FIRMWARE_COUNT=$(find bin/targets/ -type f \( -name "*.bin" -o -name "*.img" \) | wc -l)
+          if [ "$FIRMWARE_COUNT" -eq 0 ]; then
+            echo "ERROR: No firmware files found! Build may have failed."
+            find bin/ -type f 2>/dev/null | head -20
+            exit 1
+          fi
+          echo "Found $FIRMWARE_COUNT firmware files"
+          find bin/targets/ -type f \( -name "*.bin" -o -name "*.img" \) -exec ls -la {} \;
 
       - name: Organize firmware artifacts
         if: steps.setdevice.outputs.build == 'true'

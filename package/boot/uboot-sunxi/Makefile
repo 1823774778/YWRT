@@ -10,7 +10,7 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_VERSION:=2026.04
-PKG_HASH:=f81bc51f067f28f16b07294e81fffb7565b811f30c3c4bfada63c14229051ca9
+PKG_HASH:=ac7c04b8b7004923b00a4e5d6699c5df4d21233bac9fda690d8cfbc209fff2fd
 
 PKG_MAINTAINER:=Zoltan HERPAI <wigyori@uid0.hu>
 
