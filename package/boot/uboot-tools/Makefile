@@ -9,7 +9,7 @@ PKG_SOURCE_URL:= \
 	https://ftp.denx.de/pub/u-boot \
 	https://mirror.cyberbits.eu/u-boot
 PKG_URL:=https://docs.u-boot.org/en/latest/
-PKG_HASH:=ac7c04b8b7004923b00a4e5d6699c5df4d21233bac9fda690d8cfbc209fff2fd
+PKG_HASH:=f81bc51f067f28f16b07294e81fffb7565b811f30c3c4bfada63c14229051ca9
 PKG_SOURCE_SUBDIR:=$(PKG_DISTNAME)-$(PKG_VERSION)
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_DISTNAME)-$(PKG_VERSION)
 
