@@ -1,0 +1,191 @@
+name: Build YWRT Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      devices:
+        description: 'Devices to build (athena, arthur, or both)'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - athena
+          - arthur
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'target/linux/qualcommax/**'
+      - 'package/**'
+      - 'config/**'
+      - '.github/workflows/build.yml'
+
+env:
+  FORCE_UNSAFE_CONFIGURE: 1
+  BUILD_LOG: 1
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    name: Build ${{ matrix.device.display }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 720
+
+    strategy:
+      fail-fast: false
+      matrix:
+        device:
+          - name: athena
+            target: jdcloud_re-cs-02
+            display: JDCloud Athena (RE-CS-02)
+            seed: config/ywrt-athena.config
+          - name: arthur
+            target: jdcloud_re-cs-07
+            display: JDCloud Arthur (RE-CS-07)
+            seed: config/ywrt-arthur.config
+
+    steps:
+      - name: Free disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          sudo apt-get clean
+          docker system prune -af --volumes 2>/dev/null || true
+          echo "=== After cleanup ==="
+          df -h /
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set build device
+        id: setdevice
+        run: |
+          DEVICE_INPUT="${{ github.event.inputs.devices || 'both' }}"
+          CURRENT="${{ matrix.device.name }}"
+          if [ "$DEVICE_INPUT" = "both" ] || [ "$DEVICE_INPUT" = "$CURRENT" ]; then
+            echo "build=true" >> $GITHUB_OUTPUT
+            echo "Building ${{ matrix.device.display }}"
+          else
+            echo "build=false" >> $GITHUB_OUTPUT
+            echo "Skipping ${{ matrix.device.display }} (input: $DEVICE_INPUT)"
+          fi
+
+      - name: Install build dependencies
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses-dev libssl-dev python3-distutils rsync unzip zlib1g-dev \
+            swig libelf-dev ecj fastjar java-propose-classpath python3-setuptools \
+            python3-pyelftools python3-cryptography xxd
+
+      - name: Configure git
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          git config --global user.email "ywrt-bot@users.noreply.github.com"
+          git config --global user.name "YWRT Build Bot"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Update & install feeds
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Generate .config for ${{ matrix.device.display }}
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          echo "=== Copying seed config: ${{ matrix.device.seed }} ==="
+          cp ${{ matrix.device.seed }} .config
+          echo "=== Running defconfig to expand ==="
+          make defconfig
+          echo "=== Final .config device selection ==="
+          grep -E "CONFIG_TARGET_qualcommax_ipq60xx_DEVICE" .config | head -20
+          echo "=== Package count ==="
+          grep -c "=y" .config
+
+      - name: Download sources
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          make download -j$(nproc) 2>&1 | tail -30
+          echo "=== Download complete ==="
+          ls dl/ | wc -l
+          du -sh dl/
+
+      - name: Build tools
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          make tools/compile -j$(nproc) 2>&1 | tail -30
+
+      - name: Build toolchain
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          make toolchain/compile -j$(nproc) 2>&1 | tail -30
+
+      - name: Build target (kernel)
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          make target/linux/compile -j$(nproc) 2>&1 | tail -30
+
+      - name: Build packages
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          make package/compile -j$(nproc) 2>&1 | tail -30
+          make package/install -j$(nproc) 2>&1 | tail -30
+          make package/index -j$(nproc) 2>&1 | tail -30
+
+      - name: Build firmware images
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          make target/linux/install -j$(nproc) 2>&1 | tail -30
+          echo "=== Build complete ==="
+          find bin/targets/ -type f | head -30
+
+      - name: Organize firmware artifacts
+        if: steps.setdevice.outputs.build == 'true'
+        run: |
+          FIRMWARE_DIR="firmware/${{ matrix.device.name }}"
+          mkdir -p "$FIRMWARE_DIR"
+          # Copy all built firmware files
+          find bin/targets/ -type f \( -name "*.bin" -o -name "*.img" -o -name "*.tar" -o -name "*.ubi" -o -name "*.manifest" -o -name "*.sha256sum" \) -exec cp {} "$FIRMWARE_DIR/" \;
+          # Copy build info
+          {
+            echo "YWRT Firmware Build Info"
+            echo "========================"
+            echo "Device: ${{ matrix.device.display }}"
+            echo "Target: ${{ matrix.device.target }}"
+            echo "Build Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "Git Commit: ${{ github.sha }}"
+            echo "Git Branch: ${{ github.ref_name }}"
+            echo ""
+            echo "Files:"
+            ls -la "$FIRMWARE_DIR/"
+          } > "$FIRMWARE_DIR/BUILD_INFO.txt"
+          echo "=== Firmware artifacts ==="
+          ls -la "$FIRMWARE_DIR/"
+
+      - name: Upload firmware artifacts
+        if: steps.setdevice.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ywrt-${{ matrix.device.name }}-firmware
+          path: firmware/${{ matrix.device.name }}/
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload build logs on failure
+        if: failure() && steps.setdevice.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ywrt-${{ matrix.device.name }}-logs
+          path: |
+            logs/
+            .config
+          retention-days: 7
+          if-no-files-found: ignore
