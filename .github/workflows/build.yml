@@ -91,6 +91,10 @@ jobs:
           git config --global user.email "ywrt-bot@users.noreply.github.com"
           git config --global user.name "YWRT Build Bot"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Increase git timeouts for large repos (qca-nss from codelinaro)
+          git config --global http.lowSpeedLimit 1000
+          git config --global http.lowSpeedTime 60
+          git config --global http.postBuffer 524288000
 
       - name: Update & install feeds
         if: steps.setdevice.outputs.build == 'true'
@@ -111,11 +115,25 @@ jobs:
           echo "=== Package count ==="
           grep -c "=y" .config
 
-      - name: Download sources
+      - name: Download sources (with retry)
         if: steps.setdevice.outputs.build == 'true'
         run: |
           set -o pipefail
-          make download -j$(nproc) 2>&1 | tail -50
+          # Retry download up to 3 times for flaky mirrors (codelinaro, etc.)
+          for i in 1 2 3; do
+            echo "=== Download attempt $i ==="
+            if make download -j$(nproc) V=s 2>&1 | tee /tmp/download.log | tail -80; then
+              echo "Download succeeded on attempt $i"
+              break
+            else
+              echo "Download failed on attempt $i, retrying in 30s..."
+              sleep 30
+              if [ $i -eq 3 ]; then
+                echo "=== All download attempts failed ==="
+                exit 1
+              fi
+            fi
+          done
           echo "=== Download complete ==="
           ls dl/ | wc -l
           du -sh dl/
@@ -124,27 +142,43 @@ jobs:
         if: steps.setdevice.outputs.build == 'true'
         run: |
           set -o pipefail
-          make tools/compile -j$(nproc) 2>&1 | tail -50
+          make tools/compile -j$(nproc) V=s 2>&1 | tail -80
 
       - name: Build toolchain
         if: steps.setdevice.outputs.build == 'true'
         run: |
           set -o pipefail
-          make toolchain/compile -j$(nproc) 2>&1 | tail -50
+          make toolchain/compile -j$(nproc) V=s 2>&1 | tail -80
 
       - name: Build target (kernel)
         if: steps.setdevice.outputs.build == 'true'
         run: |
           set -o pipefail
-          make target/linux/compile -j$(nproc) 2>&1 | tail -50
+          make target/linux/compile -j$(nproc) V=s 2>&1 | tail -80
 
-      - name: Build packages
+      - name: Build packages (with retry)
         if: steps.setdevice.outputs.build == 'true'
         run: |
           set -o pipefail
-          make package/compile -j$(nproc) 2>&1 | tail -50
-          make package/install -j$(nproc) 2>&1 | tail -50
-          make package/index -j$(nproc) 2>&1 | tail -50
+          # Retry package compile up to 3 times
+          for i in 1 2 3; do
+            echo "=== Package compile attempt $i ==="
+            if make package/compile -j$(nproc) V=s 2>&1 | tee /tmp/pkg-compile.log | tail -100; then
+              echo "Package compile succeeded on attempt $i"
+              break
+            else
+              echo "Package compile failed on attempt $i, retrying in 30s..."
+              sleep 30
+              if [ $i -eq 3 ]; then
+                echo "=== All package compile attempts failed ==="
+                echo "=== Last 200 lines of log ==="
+                tail -200 /tmp/pkg-compile.log
+                exit 1
+              fi
+            fi
+          done
+          make package/install -j$(nproc) V=s 2>&1 | tail -50
+          make package/index -j$(nproc) V=s 2>&1 | tail -50
 
       - name: Build firmware images
         if: steps.setdevice.outputs.build == 'true'
