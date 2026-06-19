@@ -171,13 +171,16 @@ jobs:
               # Show errors from the log
               echo "=== Errors from this attempt ==="
               grep -E "ERROR:|Error [0-9]+|failed to build|Hash mismatch" /tmp/pkg-compile.log | tail -30 || true
+              # Show nettle/libhogweed/hostapd related errors
+              echo "=== Nettle/libhogweed/hostapd errors ==="
+              grep -B5 -A5 -iE "libhogweed|nettle|hostapd\.o" /tmp/pkg-compile.log | tail -60 || true
               # Clean up any failed downloads to allow retry
               make package/clean 2>/dev/null || true
               sleep 30
               if [ $i -eq 3 ]; then
                 echo "=== All package compile attempts failed ==="
-                echo "=== Last 200 lines of log ==="
-                tail -200 /tmp/pkg-compile.log
+                echo "=== Last 500 lines of log ==="
+                tail -500 /tmp/pkg-compile.log
                 exit 1
               fi
             fi
@@ -246,5 +249,7 @@ jobs:
           path: |
             logs/
             .config
+            /tmp/pkg-compile.log
+            /tmp/download.log
           retention-days: 7
           if-no-files-found: ignore
