@@ -168,6 +168,11 @@ jobs:
               break
             else
               echo "Package compile failed on attempt $i, retrying in 30s..."
+              # Show errors from the log
+              echo "=== Errors from this attempt ==="
+              grep -E "ERROR:|Error [0-9]+|failed to build|Hash mismatch" /tmp/pkg-compile.log | tail -30 || true
+              # Clean up any failed downloads to allow retry
+              make package/clean 2>/dev/null || true
               sleep 30
               if [ $i -eq 3 ]; then
                 echo "=== All package compile attempts failed ==="
